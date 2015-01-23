@@ -1,0 +1,9 @@
+---
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tags:
+    - rackspace
+  roles:
+    - role: test_rax
+      tags: test_rax
