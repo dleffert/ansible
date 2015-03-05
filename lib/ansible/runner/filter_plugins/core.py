@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+from __future__ import absolute_import
+
 import sys
 import base64
 import json
@@ -23,10 +25,10 @@ import types
 import pipes
 import glob
 import re
-import collections
 import crypt
 import hashlib
 import string
+from functools import partial
 import operator as py_operator
 from random import SystemRandom, shuffle
 import uuid
@@ -36,7 +38,8 @@ from jinja2.filters import environmentfilter
 from distutils.version import LooseVersion, StrictVersion
 
 from ansible import errors
-from ansible.utils import md5s, checksum_s
+from ansible.utils.hashing import md5s, checksum_s
+from ansible.utils.unicode import unicode_wrap, to_unicode
 
 
 UUID_NAMESPACE_ANSIBLE = uuid.UUID('361E6D51-FAEC-444A-9079-341386DA8E2E')
@@ -44,7 +47,8 @@ UUID_NAMESPACE_ANSIBLE = uuid.UUID('361E6D51-FAEC-444A-9079-341386DA8E2E')
 
 def to_nice_yaml(*a, **kw):
     '''Make verbose, human readable yaml'''
-    return yaml.safe_dump(*a, indent=4, allow_unicode=True, default_flow_style=False, **kw)
+    transformed = yaml.safe_dump(*a, indent=4, allow_unicode=True, default_flow_style=False, **kw)
+    return to_unicode(transformed)
 
 def to_json(a, *args, **kw):
     ''' Convert the value to JSON '''
@@ -172,51 +176,13 @@ def regex_replace(value='', pattern='', replacement='', ignorecase=False):
     _re = re.compile(pattern, flags=flags)
     return _re.sub(replacement, value)
 
-def unique(a):
-    if isinstance(a,collections.Hashable):
-        c = set(a)
+def ternary(value, true_val, false_val):
+    '''  value ? true_val : false_val '''
+    if value:
+        return true_val
     else:
-        c = []
-        for x in a:
-            if x not in c:
-                c.append(x)
-    return c
+        return false_val
 
-def intersect(a, b):
-    if isinstance(a,collections.Hashable) and isinstance(b,collections.Hashable):
-        c = set(a) & set(b)
-    else:
-        c = unique(filter(lambda x: x in b, a))
-    return c
-
-def difference(a, b):
-    if isinstance(a,collections.Hashable) and isinstance(b,collections.Hashable):
-        c = set(a) - set(b)
-    else:
-        c = unique(filter(lambda x: x not in b, a))
-    return c
-
-def symmetric_difference(a, b):
-    if isinstance(a,collections.Hashable) and isinstance(b,collections.Hashable):
-        c = set(a) ^ set(b)
-    else:
-        c = unique(filter(lambda x: x not in intersect(a,b), union(a,b)))
-    return c
-
-def union(a, b):
-    if isinstance(a,collections.Hashable) and isinstance(b,collections.Hashable):
-        c = set(a) | set(b)
-    else:
-        c = unique(a + b)
-    return c
-
-def min(a):
-    _min = __builtins__.get('min')
-    return _min(a);
-
-def max(a):
-    _max = __builtins__.get('max')
-    return _max(a);
 
 def version_compare(value, version, operator='eq', strict=False):
     ''' Perform a version comparison on a value '''
@@ -310,8 +276,8 @@ class FilterModule(object):
     def filters(self):
         return {
             # base 64
-            'b64decode': base64.b64decode,
-            'b64encode': base64.b64encode,
+            'b64decode': partial(unicode_wrap, base64.b64decode),
+            'b64encode': partial(unicode_wrap, base64.b64encode),
 
             # uuid
             'to_uuid': to_uuid,
@@ -327,11 +293,11 @@ class FilterModule(object):
             'from_yaml': yaml.safe_load,
 
             # path
-            'basename': os.path.basename,
-            'dirname': os.path.dirname,
-            'expanduser': os.path.expanduser,
-            'realpath': os.path.realpath,
-            'relpath': os.path.relpath,
+            'basename': partial(unicode_wrap, os.path.basename),
+            'dirname': partial(unicode_wrap, os.path.dirname),
+            'expanduser': partial(unicode_wrap, os.path.expanduser),
+            'realpath': partial(unicode_wrap, os.path.realpath),
+            'relpath': partial(unicode_wrap, os.path.relpath),
 
             # failure testing
             'failed'  : failed,
@@ -372,15 +338,10 @@ class FilterModule(object):
             'regex': regex,
             'regex_replace': regex_replace,
 
-            # list
-            'unique' : unique,
-            'intersect': intersect,
-            'difference': difference,
-            'symmetric_difference': symmetric_difference,
-            'union': union,
-            'min' : min,
-            'max' : max,
+            # ? : ;
+            'ternary': ternary,
 
+            # list
             # version comparison
             'version_compare': version_compare,
 

@@ -33,7 +33,8 @@ from ansible.playbook.block import Block
 from ansible.playbook.conditional import Conditional
 from ansible.playbook.role import Role
 from ansible.playbook.taggable import Taggable
-from ansible.playbook.task_include import TaskInclude
+
+__all__ = ['Task']
 
 class Task(Base, Conditional, Taggable):
 
@@ -93,6 +94,7 @@ class Task(Base, Conditional, Taggable):
     _sudo_pass            = FieldAttribute(isa='string')
     _transport            = FieldAttribute(isa='string')
     _until                = FieldAttribute(isa='list') # ?
+    _vars                 = FieldAttribute(isa='dict', default=dict())
 
     def __init__(self, block=None, role=None, task_include=None):
         ''' constructors a task, without the Task.load classmethod, it will be pretty blank '''
@@ -100,7 +102,6 @@ class Task(Base, Conditional, Taggable):
         self._block        = block
         self._role         = role
         self._task_include = task_include
-        self._dep_chain    = []
 
         super(Task, self).__init__()
 
@@ -201,7 +202,7 @@ class Task(Base, Conditional, Taggable):
         super(Task, self).post_validate(all_vars=all_vars, fail_on_undefined=fail_on_undefined)
 
     def get_vars(self):
-        all_vars = dict()
+        all_vars = self.vars.copy()
         if self._task_include:
             all_vars.update(self._task_include.get_vars())
 
@@ -224,7 +225,6 @@ class Task(Base, Conditional, Taggable):
 
     def copy(self):
         new_me = super(Task, self).copy()
-        new_me._dep_chain = self._dep_chain[:]
 
         new_me._block = None
         if self._block:
@@ -242,7 +242,6 @@ class Task(Base, Conditional, Taggable):
 
     def serialize(self):
         data = super(Task, self).serialize()
-        data['dep_chain'] = self._dep_chain
 
         if self._block:
             data['block'] = self._block.serialize()
@@ -256,8 +255,11 @@ class Task(Base, Conditional, Taggable):
         return data
 
     def deserialize(self, data):
+
+        # import is here to avoid import loops
+        #from ansible.playbook.task_include import TaskInclude
+
         block_data = data.get('block')
-        self._dep_chain = data.get('dep_chain', [])
 
         if block_data:
             b = Block()
@@ -274,7 +276,8 @@ class Task(Base, Conditional, Taggable):
 
         ti_data = data.get('task_include')
         if ti_data:
-            ti = TaskInclude()
+            #ti = TaskInclude()
+            ti = Task()
             ti.deserialize(ti_data)
             self._task_include = ti
             del data['task_include']
@@ -282,10 +285,6 @@ class Task(Base, Conditional, Taggable):
         super(Task, self).deserialize(data)
 
     def evaluate_conditional(self, all_vars):
-        if len(self._dep_chain):
-            for dep in self._dep_chain:
-                if not dep.evaluate_conditional(all_vars):
-                    return False
         if self._block is not None:
             if not self._block.evaluate_conditional(all_vars):
                 return False
@@ -296,9 +295,6 @@ class Task(Base, Conditional, Taggable):
 
     def evaluate_tags(self, only_tags, skip_tags, all_vars):
         result = False
-        if len(self._dep_chain):
-            for dep in self._dep_chain:
-                result |= dep.evaluate_tags(only_tags=only_tags, skip_tags=skip_tags, all_vars=all_vars)
         if self._block is not None:
             result |= self._block.evaluate_tags(only_tags=only_tags, skip_tags=skip_tags, all_vars=all_vars)
         return result | super(Task, self).evaluate_tags(only_tags=only_tags, skip_tags=skip_tags, all_vars=all_vars)
@@ -317,5 +313,3 @@ class Task(Base, Conditional, Taggable):
         if self._task_include:
             self._task_include.set_loader(loader)
 
-        for dep in self._dep_chain:
-            dep.set_loader(loader)

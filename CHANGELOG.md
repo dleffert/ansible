@@ -6,6 +6,45 @@ Ansible Changes By Release
 in progress, details pending
 
 * Add a clone parameter to git module that allows you to get information about a remote repo even if it doesn't exist locally.
+* Safety changes: several modules have force parameters that defaulted to true.
+  These have been changed to default to false so as not to accidentally lose
+  work.  Playbooks that depended on the former behaviour simply to add
+  force=True to the task that needs it.  Affected modules:
+
+  * bzr: When local modifications exist in a checkout, the bzr module used to
+    default to temoving the modifications on any operation.  Now the module
+    will not remove the modifications unless force=yes is specified.
+    Operations that depend on a clean working tree may fail unless force=yes is
+    added.
+  * git: When local modifications exist in a checkout, the git module will now
+    fail unless force is explictly specified.  Specifying force will allow the
+    module to revert and overwrite local modifications to make git actions
+    succeed.
+  * hg: When local modifications exist in a checkout, the hg module used to
+    default to removing the modifications on any operation.  Now the module
+    will not remove the modifications unless force=yes is specified.
+  * subversion: When updating a checkout with local modifications, you now need
+    to add force so the module will revert the modifications before updating.
+
+* Optimize the plugin loader to cache available plugins much more efficiently.
+  For some use cases this can lead to dramatic improvements in startup time.
+
+## 1.8.4 "You Really Got Me" - Feb 19, 2015
+
+* Fixed regressions in ec2 and mount modules, introduced in 1.8.3
+
+## 1.8.3 "You Really Got Me" - Feb 17, 2015
+
+* Fixing a security bug related to the default permissions set on a tempoary file created when using "ansible-vault view <filename>".
+* Many bug fixes, for both core code and core modules.
+
+## 1.8.2 "You Really Got Me" - Dec 04, 2014
+
+* Various bug fixes for packaging issues related to modules.
+* Various bug fixes for lookup plugins.
+* Various bug fixes for some modules (continued cleanup of postgresql issues, etc.).
+
+* Add a clone parameter to git module that allows you to get information about a remote repo even if it doesn't exist locally.
 
 ## 1.8.1 "You Really Got Me" - Nov 26, 2014
 

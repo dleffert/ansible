@@ -39,8 +39,28 @@ from ansible.plugins import module_loader
 from ansible.utils.vars import combine_vars
 
 
-__all__ = ['Role', 'ROLE_CACHE']
+__all__ = ['Role', 'ROLE_CACHE', 'hash_params']
 
+# FIXME: this should be a utility function, but can't be a member of
+#        the role due to the fact that it would require the use of self
+#        in a static method. This is also used in the base class for
+#        strategies (ansible/plugins/strategies/__init__.py)
+def hash_params(params):
+    if not isinstance(params, dict):
+        return params
+    else:
+        s = set()
+        for k,v in params.iteritems():
+            if isinstance(v, dict):
+                s.update((k, hash_params(v)))
+            elif isinstance(v, list):
+                things = []
+                for item in v:
+                    things.append(hash_params(item))
+                s.update((k, tuple(things)))
+            else:
+                s.update((k, v))
+        return frozenset(s)
 
 # The role cache is used to prevent re-loading roles, which
 # may already exist. Keys into this cache are the SHA1 hash
@@ -84,7 +104,8 @@ class Role(Base, Conditional, Taggable):
             # specified for a role as the key and the Role() object itself.
             # We use frozenset to make the dictionary hashable.
 
-            hashed_params = frozenset(role_include.get_role_params().iteritems())
+            #hashed_params = frozenset(role_include.get_role_params().iteritems())
+            hashed_params = hash_params(role_include.get_role_params())
             if role_include.role in ROLE_CACHE:
                 for (entry, role_obj) in ROLE_CACHE[role_include.role].iteritems():
                     if hashed_params == entry:
@@ -283,25 +304,25 @@ class Role(Base, Conditional, Taggable):
         can correctly take their parent's tags/conditionals into account.
         '''
 
-        task_list = []
+        block_list = []
 
         # update the dependency chain here
         new_dep_chain = dep_chain + [self]
 
         deps = self.get_direct_dependencies()
         for dep in deps:
-            dep_tasks = dep.compile(dep_chain=new_dep_chain)
-            for dep_task in dep_tasks:
+            dep_blocks = dep.compile(dep_chain=new_dep_chain)
+            for dep_block in dep_blocks:
                 # since we're modifying the task, and need it to be unique,
                 # we make a copy of it here and assign the dependency chain
                 # to the copy, then append the copy to the task list.
-                new_dep_task = dep_task.copy()
-                new_dep_task._dep_chain = new_dep_chain
-                task_list.append(new_dep_task)
+                new_dep_block = dep_block.copy()
+                new_dep_block._dep_chain = new_dep_chain
+                block_list.append(new_dep_block)
 
-        task_list.extend(compile_block_list(self._task_blocks))
+        block_list.extend(self._task_blocks)
 
-        return task_list
+        return block_list
 
     def serialize(self, include_deps=True):
         res = super(Role, self).serialize()

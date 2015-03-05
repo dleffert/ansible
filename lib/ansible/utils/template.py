@@ -33,6 +33,7 @@ import ast
 import traceback
 
 from ansible.utils.string_functions import count_newlines_from_end
+from ansible.utils import to_bytes
 
 class Globals(object):
 
@@ -88,6 +89,8 @@ def lookup(name, *args, **kwargs):
     instance = utils.plugins.lookup_loader.get(name.lower(), basedir=kwargs.get('basedir',None))
     tvars = kwargs.get('vars', None)
 
+    wantlist = kwargs.pop('wantlist', False)
+
     if instance is not None:
         try:
             ran = instance.run(*args, inject=tvars, **kwargs)
@@ -97,7 +100,7 @@ def lookup(name, *args, **kwargs):
             raise errors.AnsibleUndefinedVariable("One or more undefined variables: %s" % str(e))
         except Exception, e:
             raise errors.AnsibleError('Unexpected error in during lookup: %s' % e)
-        if ran:
+        if ran and not wantlist:
             ran = ",".join(ran)
         return ran
     else:
@@ -272,7 +275,7 @@ def template_from_file(basedir, path, vars, vault_password=None):
     managed_str = managed_default.format(
         host = vars['template_host'],
         uid  = vars['template_uid'],
-        file = vars['template_path']
+        file = to_bytes(vars['template_path'])
     )
     vars['ansible_managed'] = time.strftime(
         managed_str,

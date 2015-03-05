@@ -13,6 +13,7 @@ from ansible.parsing.splitter import parse_kv
 from ansible.playbook import Playbook
 from ansible.playbook.task import Task
 from ansible.utils.cli import base_parser
+from ansible.utils.unicode import to_unicode
 from ansible.utils.vars import combine_vars
 from ansible.vars import VariableManager
 
@@ -105,18 +106,17 @@ def main(args):
 
     extra_vars = {}
     for extra_vars_opt in options.extra_vars:
-        if extra_vars_opt.startswith("@"):
+        extra_vars_opt = to_unicode(extra_vars_opt, errors='strict')
+        if extra_vars_opt.startswith(u"@"):
             # Argument is a YAML file (JSON is a subset of YAML)
             data = loader.load_from_file(extra_vars_opt[1:])
-            extra_vars = combine_vars(extra_vars, data)
-        elif extra_vars_opt and extra_vars_opt[0] in '[{':
+        elif extra_vars_opt and extra_vars_opt[0] in u'[{':
             # Arguments as YAML
-            data = loader.load(extra_vars)
-            extra_vars = combine_vars(extra_vars, data)
+            data = loader.load(extra_vars_opt)
         else:
             # Arguments as Key-value
             data = parse_kv(extra_vars_opt)
-            extra_vars = combine_vars(extra_vars, data)
+        extra_vars = combine_vars(extra_vars, data)
 
     # FIXME: this should be moved inside the playbook executor code
     only_tags = options.tags.split(",")

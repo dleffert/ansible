@@ -111,6 +111,10 @@ To install from source.
     $ cd ./ansible
     $ source ./hacking/env-setup
 
+If you want to suppress spurious warnings/errors, use:
+
+    $ source ./hacking/env-setup -q
+
 If you don't have pip installed in your version of Python, install pip::
 
     $ sudo easy_install pip
@@ -169,10 +173,10 @@ You can also build an RPM yourself.  From the root of a checkout or tarball, use
 
 .. code-block:: bash
 
-    $ git clone git://github.com/ansible/ansible.git
+    $ git clone git://github.com/ansible/ansible.git --recursive
     $ cd ./ansible
     $ make rpm
-    $ sudo rpm -Uvh ~/rpmbuild/ansible-*.noarch.rpm
+    $ sudo rpm -Uvh ./rpmbuild/ansible-*.noarch.rpm
 
 .. _from_apt:
 
@@ -244,6 +248,18 @@ To install on a Mac, make sure you have Homebrew, then run:
 
     $ brew update
     $ brew install ansible
+
+.. _from_pkgutil:
+
+Latest Releases Via OpenCSW (Solaris)
++++++++++++++++++++++++++++++++++++++
+
+Ansible is available for Solaris as `SysV package from OpenCSW <https://www.opencsw.org/packages/ansible/>`_.
+
+.. code-block:: bash
+
+    # pkgadd -d http://get.opencsw.org/now
+    # /opt/csw/bin/pkgutil -i ansible
 
 .. _from_pip:
 

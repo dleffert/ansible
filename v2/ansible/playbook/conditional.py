@@ -53,7 +53,7 @@ class Conditional:
         False if any of them evaluate as such.
         '''
 
-        templar = Templar(loader=self._loader, variables=all_vars)
+        templar = Templar(loader=self._loader, variables=all_vars, fail_on_undefined=False)
         for conditional in self.when:
             if not self._check_conditional(conditional, templar, all_vars):
                 return False
@@ -66,22 +66,16 @@ class Conditional:
         evaluation.
         '''
 
+        original = conditional
         if conditional is None or conditional == '':
             return True
 
-        # FIXME: is this required? there is no indication what it does
-        #conditional = conditional.replace("jinja2_compare ","")
+        if conditional in all_vars and '-' not in unicode(all_vars[conditional]):
+            conditional = all_vars[conditional]
 
-        # allow variable names
-        #if conditional in all_vars and '-' not in str(all_vars[conditional]):
-        #    conditional = all_vars[conditional]
-
-        conditional = templar.template(conditional, convert_bare=True)
-        if not isinstance(conditional, basestring):
+        conditional = templar.template(conditional)
+        if not isinstance(conditional, basestring) or conditional == "":
             return conditional
-
-        # FIXME: same as above
-        #original = str(conditional).replace("jinja2_compare ","")
 
         # a Jinja2 evaluation that results in something Python can eval!
         presented = "{%% if %s %%} True {%% else %%} False {%% endif %%}" % conditional
@@ -93,12 +87,12 @@ class Conditional:
             # variable was undefined. If we happened to be
             # looking for an undefined variable, return True,
             # otherwise fail
-            if "is undefined" in conditional:
+            if "is undefined" in original:
                 return True
-            elif "is defined" in conditional:
+            elif "is defined" in original:
                 return False
             else:
-                raise AnsibleError("error while evaluating conditional: %s" % original)
+                raise AnsibleError("error while evaluating conditional: %s (%s)" % (original, presented))
         elif val == "True":
             return True
         elif val == "False":

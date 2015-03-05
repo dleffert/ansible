@@ -28,6 +28,7 @@ try:
 except ImportError:
     from sha import sha as sha1
 
+from ansible import constants as C
 from ansible.parsing import DataLoader
 from ansible.plugins.cache import FactCache
 from ansible.template import Templar
@@ -76,6 +77,20 @@ class VariableManager:
 
     def set_inventory(self, inventory):
         self._inventory = inventory
+
+    def _combine_vars(self, a, b):
+        '''
+        Combines dictionaries of variables, based on the hash behavior
+        '''
+
+        # FIXME: do we need this from utils, or should it just
+        #        be merged into this definition?
+        #_validate_both_dicts(a, b)
+
+        if C.DEFAULT_HASH_BEHAVIOUR == "merge":
+            return self._merge_dicts(a, b)
+        else:
+            return dict(a.items() + b.items())
 
     def _merge_dicts(self, a, b):
         '''
@@ -135,7 +150,7 @@ class VariableManager:
             # first we compile any vars specified in defaults/main.yml
             # for all roles within the specified play
             for role in play.get_roles():
-                all_vars = self._merge_dicts(all_vars, role.get_default_vars())
+                all_vars = self._combine_vars(all_vars, role.get_default_vars())
 
         if host:
             # next, if a host is specified, we load any vars from group_vars
@@ -144,49 +159,49 @@ class VariableManager:
 
             # we merge in the special 'all' group_vars first, if they exist
             if 'all' in self._group_vars_files:
-                all_vars = self._merge_dicts(all_vars, self._group_vars_files['all'])
+                all_vars = self._combine_vars(all_vars, self._group_vars_files['all'])
 
             for group in host.get_groups():
                 group_name = group.get_name()
-                all_vars = self._merge_dicts(all_vars, group.get_vars())
+                all_vars = self._combine_vars(all_vars, group.get_vars())
                 if group_name in self._group_vars_files and group_name != 'all':
-                    all_vars = self._merge_dicts(all_vars, self._group_vars_files[group_name])
+                    all_vars = self._combine_vars(all_vars, self._group_vars_files[group_name])
 
             host_name = host.get_name()
             if host_name in self._host_vars_files:
-                all_vars = self._merge_dicts(all_vars, self._host_vars_files[host_name])
+                all_vars = self._combine_vars(all_vars, self._host_vars_files[host_name])
 
             # then we merge in vars specified for this host
-            all_vars = self._merge_dicts(all_vars, host.get_vars())
+            all_vars = self._combine_vars(all_vars, host.get_vars())
 
             # next comes the facts cache and the vars cache, respectively
-            all_vars = self._merge_dicts(all_vars, self._fact_cache.get(host.get_name(), dict()))
+            all_vars = self._combine_vars(all_vars, self._fact_cache.get(host.get_name(), dict()))
 
         if play:
-            all_vars = self._merge_dicts(all_vars, play.get_vars())
+            all_vars = self._combine_vars(all_vars, play.get_vars())
             templar = Templar(loader=loader, variables=all_vars)
             for vars_file in play.get_vars_files():
                 try:
                     vars_file = templar.template(vars_file)
                     data = loader.load_from_file(vars_file)
-                    all_vars = self._merge_dicts(all_vars, data)
+                    all_vars = self._combine_vars(all_vars, data)
                 except:
                     # FIXME: get_vars should probably be taking a flag to determine
                     #        whether or not vars files errors should be fatal at this
                     #        stage, or just base it on whether a host was specified?
                     pass
             for role in play.get_roles():
-                all_vars = self._merge_dicts(all_vars, role.get_vars())
+                all_vars = self._combine_vars(all_vars, role.get_vars())
 
         if host:
-            all_vars = self._merge_dicts(all_vars, self._vars_cache.get(host.get_name(), dict()))
+            all_vars = self._combine_vars(all_vars, self._vars_cache.get(host.get_name(), dict()))
 
         if task:
             if task._role:
-                all_vars = self._merge_dicts(all_vars, task._role.get_vars())
-            all_vars = self._merge_dicts(all_vars, task.get_vars())
+                all_vars = self._combine_vars(all_vars, task._role.get_vars())
+            all_vars = self._combine_vars(all_vars, task.get_vars())
 
-        all_vars = self._merge_dicts(all_vars, self._extra_vars)
+        all_vars = self._combine_vars(all_vars, self._extra_vars)
 
         # FIXME: make sure all special vars are here
         # Finally, we create special vars
@@ -194,6 +209,9 @@ class VariableManager:
         if host and self._inventory is not None:
             hostvars = HostVars(vars_manager=self, inventory=self._inventory, loader=loader)
             all_vars['hostvars'] = hostvars
+
+        if self._inventory is not None:
+            all_vars['inventory_dir'] = self._inventory.basedir()
 
         # the 'omit' value alows params to be left out if the variable they are based on is undefined
         all_vars['omit'] = self._omit_token
@@ -221,7 +239,27 @@ class VariableManager:
         basename of the file without the extension
         '''
 
-        data = loader.load_from_file(path)
+        if os.path.isdir(path):
+            data = dict()
+
+            try:
+                names = os.listdir(path)
+            except os.error, err:
+                raise AnsibleError("This folder cannot be listed: %s: %s." % (path, err.strerror))
+
+            # evaluate files in a stable order rather than whatever
+            # order the filesystem lists them.
+            names.sort()
+
+            # do not parse hidden files or dirs, e.g. .svn/
+            paths = [os.path.join(path, name) for name in names if not name.startswith('.')]
+            for p in paths:
+                _found, results = self._load_inventory_file(path=p, loader=loader)
+                data = self._combine_vars(data, results)
+
+        else:
+            data = loader.load_from_file(path)
+
         name = self._get_inventory_basename(path)
         return (name, data)
 
