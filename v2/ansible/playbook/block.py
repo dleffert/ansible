@@ -21,12 +21,13 @@ __metaclass__ = type
 
 from ansible.playbook.attribute import Attribute, FieldAttribute
 from ansible.playbook.base import Base
+from ansible.playbook.become import Become
 from ansible.playbook.conditional import Conditional
 from ansible.playbook.helpers import load_list_of_tasks
 from ansible.playbook.role import Role
 from ansible.playbook.taggable import Taggable
 
-class Block(Base, Conditional, Taggable):
+class Block(Base, Become, Conditional, Taggable):
 
     _block  = FieldAttribute(isa='list', default=[])
     _rescue = FieldAttribute(isa='list', default=[])
@@ -65,22 +66,25 @@ class Block(Base, Conditional, Taggable):
         b = Block(parent_block=parent_block, role=role, task_include=task_include, use_handlers=use_handlers)
         return b.load_data(data, variable_manager=variable_manager, loader=loader)
 
-    def munge(self, ds):
+    def preprocess_data(self, ds):
         '''
         If a simple task is given, an implicit block for that single task
         is created, which goes in the main portion of the block
         '''
+
         is_block = False
         for attr in ('block', 'rescue', 'always'):
             if attr in ds:
                 is_block = True
                 break
+
         if not is_block:
             if isinstance(ds, list):
-                return dict(block=ds)
+                return super(Block, self).preprocess_data(dict(block=ds))
             else:
-                return dict(block=[ds])
-        return ds
+                return super(Block, self).preprocess_data(dict(block=[ds]))
+
+        return super(Block, self).preprocess_data(ds)
 
     def _load_block(self, attr, ds):
         return load_list_of_tasks(
@@ -127,22 +131,22 @@ class Block(Base, Conditional, Taggable):
     #        use_handlers=self._use_handlers,
     #    )
 
-    def compile(self):
-        '''
-        Returns the task list for this object
-        '''
-
-        task_list = []
-        for task in self.block:
-            # FIXME: evaulate task tags/conditionals here
-            task_list.extend(task.compile())
-
-        return task_list
-
     def copy(self):
+        def _dupe_task_list(task_list, new_block):
+            new_task_list = []
+            for task in task_list:
+                new_task = task.copy(exclude_block=True)
+                new_task._block = new_block
+                new_task_list.append(new_task)
+            return new_task_list
+
         new_me = super(Block, self).copy()
         new_me._use_handlers = self._use_handlers
         new_me._dep_chain = self._dep_chain[:]
+
+        new_me.block  = _dupe_task_list(self.block or [], new_me)
+        new_me.rescue = _dupe_task_list(self.rescue or [], new_me)
+        new_me.always = _dupe_task_list(self.always or [], new_me)
 
         new_me._parent_block = None
         if self._parent_block:
@@ -164,7 +168,11 @@ class Block(Base, Conditional, Taggable):
         a task we don't want to include the attribute list of tasks.
         '''
 
-        data = dict(when=self.when)
+        data = dict()
+        for attr in self._get_base_attributes():
+            if attr not in ('block', 'rescue', 'always'):
+                data[attr] = getattr(self, attr)
+
         data['dep_chain'] = self._dep_chain
 
         if self._role is not None:
@@ -182,8 +190,12 @@ class Block(Base, Conditional, Taggable):
 
         from ansible.playbook.task import Task
 
-        # unpack the when attribute, which is the only one we want
-        self.when = data.get('when')
+        # we don't want the full set of attributes (the task lists), as that
+        # would lead to a serialize/deserialize loop
+        for attr in self._get_base_attributes():
+            if attr in data and attr not in ('block', 'rescue', 'always'):
+                setattr(self, attr, data.get(attr))
+
         self._dep_chain = data.get('dep_chain', [])
 
         # if there was a serialized role, unpack it too
@@ -239,4 +251,25 @@ class Block(Base, Conditional, Taggable):
 
         for dep in self._dep_chain:
             dep.set_loader(loader)
+
+    def _get_parent_attribute(self, attr):
+        '''
+        Generic logic to get the attribute or parent attribute for a block value.
+        '''
+
+        value = self._attributes[attr]
+        if not value:
+            if self._parent_block:
+                value = getattr(self._block, attr)
+            elif self._role:
+                value = getattr(self._role, attr)
+                if not value and len(self._dep_chain):
+                    reverse_dep_chain = self._dep_chain[:]
+                    reverse_dep_chain.reverse()
+                    for dep in reverse_dep_chain:
+                        value = getattr(dep, attr)
+                        if value:
+                            break
+
+        return value
 

@@ -26,6 +26,7 @@ from ansible.playbook.conditional import Conditional
 from ansible.playbook.task import Task
 from ansible.plugins import lookup_loader, connection_loader, action_loader
 from ansible.utils.listify import listify_lookup_plugin_terms
+from ansible.utils.unicode import to_unicode
 
 from ansible.utils.debug import debug
 
@@ -33,6 +34,7 @@ __all__ = ['TaskExecutor']
 
 import json
 import time
+import pipes
 
 class TaskExecutor:
 
@@ -88,7 +90,7 @@ class TaskExecutor:
             debug("done dumping result, returning")
             return result
         except AnsibleError, e:
-            return dict(failed=True, msg=str(e))
+            return dict(failed=True, msg=to_unicode(e, nonstring='simplerepr'))
 
     def _get_loop_items(self):
         '''
@@ -381,7 +383,7 @@ class TaskExecutor:
         self._connection_info.password         = this_info.get('ansible_ssh_pass', self._connection_info.password)
         self._connection_info.private_key_file = this_info.get('ansible_ssh_private_key_file', self._connection_info.private_key_file)
         self._connection_info.connection       = this_info.get('ansible_connection', self._connection_info.connection)
-        self._connection_info.sudo_pass        = this_info.get('ansible_sudo_pass', self._connection_info.sudo_pass)
+        self._connection_info.become_pass      = this_info.get('ansible_sudo_pass', self._connection_info.become_pass)
 
         if self._connection_info.remote_addr in ('127.0.0.1', 'localhost'):
              self._connection_info.connection = 'local'

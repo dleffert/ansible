@@ -44,33 +44,20 @@ class Connection(ConnectionBase):
 
         debug("in local.exec_command()")
         # su requires to be run from a terminal, and therefore isn't supported here (yet?)
-        if self._connection_info.su:
-            raise AnsibleError("Internal Error: this module does not support running commands via su")
+        #if self._connection_info.su:
+        #    raise AnsibleError("Internal Error: this module does not support running commands via su")
 
         if in_data:
             raise AnsibleError("Internal Error: this module does not support optimized module pipelining")
 
-        # FIXME: su/sudo stuff needs to be generalized
-        #if not self.runner.sudo or not sudoable:
-        #    if executable:
-        #        local_cmd = executable.split() + ['-c', cmd]
-        #    else:
-        #        local_cmd = cmd
-        #else:
-        #    local_cmd, prompt, success_key = utils.make_sudo_cmd(self.runner.sudo_exe, sudo_user, executable, cmd)
-        if executable:
-            local_cmd = executable.split() + ['-c', cmd]
-        else:
-            local_cmd = cmd
-
         executable = executable.split()[0] if executable else None
 
-        self._display.vvv("%s EXEC %s" % (self._connection_info.remote_addr, local_cmd))
+        self._display.vvv("%s EXEC %s" % (self._connection_info.remote_addr, cmd))
         # FIXME: cwd= needs to be set to the basedir of the playbook
         debug("opening command with Popen()")
         p = subprocess.Popen(
-            local_cmd,
-            shell=isinstance(local_cmd, basestring),
+            cmd,
+            shell=isinstance(cmd, basestring),
             executable=executable, #cwd=...
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

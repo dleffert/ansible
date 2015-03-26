@@ -281,20 +281,7 @@ class Connection(ConnectionBase):
         #    ssh_cmd += ['-6']
         ssh_cmd += [self._connection_info.remote_addr]
 
-        if not (self._connection_info.sudo or self._connection_info.su):
-            prompt = None
-            if executable:
-                ssh_cmd.append(executable + ' -c ' + pipes.quote(cmd))
-            else:
-                ssh_cmd.append(cmd)
-        elif self._connection_info.su and self._connection_info.su_user:
-            su_cmd, prompt, success_key = self._connection_info.make_su_cmd(executable, cmd)
-            ssh_cmd.append(su_cmd)
-        else:
-            # FIXME: hard-coded sudo_exe here
-            sudo_cmd, prompt, success_key = self._connection_info.make_sudo_cmd('/usr/bin/sudo', executable, cmd)
-            ssh_cmd.append(sudo_cmd)
-
+        ssh_cmd.append(cmd)
         self._display.vvv("EXEC %s" % ' '.join(ssh_cmd), host=self._connection_info.remote_addr)
 
         not_in_host_file = self.not_in_host_file(self._connection_info.remote_addr)
@@ -369,6 +356,8 @@ class Connection(ConnectionBase):
         #        no_prompt_err += sudo_errput
 
         #(returncode, stdout, stderr) = self._communicate(p, stdin, in_data, su=su, sudoable=sudoable, prompt=prompt)
+        # FIXME: the prompt won't be here anymore
+        prompt=""
         (returncode, stdout, stderr) = self._communicate(p, stdin, in_data, prompt=prompt)
         
         #if C.HOST_KEY_CHECKING and not_in_host_file:

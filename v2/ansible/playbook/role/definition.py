@@ -28,6 +28,7 @@ from ansible.errors import AnsibleError
 from ansible.parsing.yaml.objects import AnsibleBaseYAMLObject, AnsibleMapping
 from ansible.playbook.attribute import Attribute, FieldAttribute
 from ansible.playbook.base import Base
+from ansible.playbook.become import Become
 from ansible.playbook.conditional import Conditional
 from ansible.playbook.taggable import Taggable
 from ansible.utils.path import unfrackpath
@@ -36,7 +37,7 @@ from ansible.utils.path import unfrackpath
 __all__ = ['RoleDefinition']
 
 
-class RoleDefinition(Base, Conditional, Taggable):
+class RoleDefinition(Base, Become, Conditional, Taggable):
 
     _role = FieldAttribute(isa='string')
 
@@ -53,9 +54,12 @@ class RoleDefinition(Base, Conditional, Taggable):
     def load(data, variable_manager=None, loader=None):
         raise AnsibleError("not implemented")
 
-    def munge(self, ds):
+    def preprocess_data(self, ds):
 
         assert isinstance(ds, dict) or isinstance(ds, string_types)
+
+        if isinstance(ds, dict):
+            ds = super(RoleDefinition, self).preprocess_data(ds)
 
         # we create a new data structure here, using the same
         # object used internally by the YAML parsing code so we

@@ -29,6 +29,7 @@ from ansible.plugins import module_loader, lookup_loader
 
 from ansible.playbook.attribute import Attribute, FieldAttribute
 from ansible.playbook.base import Base
+from ansible.playbook.become import Become
 from ansible.playbook.block import Block
 from ansible.playbook.conditional import Conditional
 from ansible.playbook.role import Role
@@ -36,7 +37,7 @@ from ansible.playbook.taggable import Taggable
 
 __all__ = ['Task']
 
-class Task(Base, Conditional, Taggable):
+class Task(Base, Conditional, Taggable, Become):
 
     """
     A task is a language feature that represents a call to a module, with given arguments and other parameters.
@@ -86,12 +87,6 @@ class Task(Base, Conditional, Taggable):
     _remote_user          = FieldAttribute(isa='string')
     _retries              = FieldAttribute(isa='int', default=1)
     _run_once             = FieldAttribute(isa='bool')
-    _su                   = FieldAttribute(isa='bool')
-    _su_pass              = FieldAttribute(isa='string')
-    _su_user              = FieldAttribute(isa='string')
-    _sudo                 = FieldAttribute(isa='bool')
-    _sudo_user            = FieldAttribute(isa='string')
-    _sudo_pass            = FieldAttribute(isa='string')
     _transport            = FieldAttribute(isa='string')
     _until                = FieldAttribute(isa='list') # ?
     _vars                 = FieldAttribute(isa='dict', default=dict())
@@ -142,7 +137,7 @@ class Task(Base, Conditional, Taggable):
         ''' returns a human readable representation of the task '''
         return "TASK: %s" % self.get_name()
 
-    def _munge_loop(self, ds, new_ds, k, v):
+    def _preprocess_loop(self, ds, new_ds, k, v):
         ''' take a lookup plugin name and store it correctly '''
 
         loop_name = k.replace("with_", "")
@@ -151,7 +146,7 @@ class Task(Base, Conditional, Taggable):
         new_ds['loop'] = loop_name
         new_ds['loop_args'] = v
 
-    def munge(self, ds):
+    def preprocess_data(self, ds):
         '''
         tasks are especially complex arguments so need pre-processing.
         keep it short.
@@ -172,6 +167,7 @@ class Task(Base, Conditional, Taggable):
         args_parser = ModuleArgsParser(task_ds=ds)
         (action, args, delegate_to) = args_parser.parse()
 
+
         new_ds['action']      = action
         new_ds['args']        = args
         new_ds['delegate_to'] = delegate_to
@@ -182,11 +178,11 @@ class Task(Base, Conditional, Taggable):
                 # determined by the ModuleArgsParser() above
                 continue
             elif k.replace("with_", "") in lookup_loader:
-                self._munge_loop(ds, new_ds, k, v)
+                self._preprocess_loop(ds, new_ds, k, v)
             else:
                 new_ds[k] = v
 
-        return new_ds
+        return super(Task, self).preprocess_data(new_ds)
 
     def post_validate(self, all_vars=dict(), fail_on_undefined=True):
         '''
@@ -214,20 +210,21 @@ class Task(Base, Conditional, Taggable):
             del all_vars['when']
         return all_vars
 
-    def compile(self):
-        '''
-        For tasks, this is just a dummy method returning an array
-        with 'self' in it, so we don't have to care about task types
-        further up the chain.
-        '''
+    # no longer used, as blocks are the lowest level of compilation now
+    #def compile(self):
+    #    '''
+    #    For tasks, this is just a dummy method returning an array
+    #    with 'self' in it, so we don't have to care about task types
+    #    further up the chain.
+    #    '''
+    #
+    #    return [self]
 
-        return [self]
-
-    def copy(self):
+    def copy(self, exclude_block=False):
         new_me = super(Task, self).copy()
 
         new_me._block = None
-        if self._block:
+        if self._block and not exclude_block:
             new_me._block = self._block.copy()
 
         new_me._role = None
@@ -312,4 +309,13 @@ class Task(Base, Conditional, Taggable):
             self._block.set_loader(loader)
         if self._task_include:
             self._task_include.set_loader(loader)
+
+    def _get_parent_attribute(self, attr):
+        '''
+        Generic logic to get the attribute or parent attribute for a task value.
+        '''
+        value = self._attributes[attr]
+        if not value and self._block:
+            value = getattr(self._block, attr)
+        return value
 

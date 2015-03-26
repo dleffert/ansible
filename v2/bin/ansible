@@ -29,7 +29,8 @@ from ansible.inventory import Inventory
 from ansible.parsing import DataLoader
 from ansible.parsing.splitter import parse_kv
 from ansible.playbook.play import Play
-from ansible.utils.cli import base_parser
+from ansible.utils.cli import base_parser, validate_conflicts, normalize_become_options, ask_passwords
+from ansible.utils.vault import read_vault_file
 from ansible.vars import VariableManager
 
 ########################################################
@@ -45,15 +46,14 @@ class Cli(object):
 
         parser = base_parser(
             usage='%prog <host-pattern> [options]',
-            runas_opts=True, 
-            subset_opts=True, 
+            runas_opts=True,
             async_opts=True,
-            output_opts=True, 
-            connect_opts=True, 
+            output_opts=True,
+            connect_opts=True,
             check_opts=True,
-            diff_opts=False,
         )
 
+        # options unique to ansible ad-hoc
         parser.add_option('-a', '--args', dest='module_args',
             help="module arguments", default=C.DEFAULT_MODULE_ARGS)
         parser.add_option('-m', '--module-name', dest='module_name',
@@ -66,15 +66,7 @@ class Cli(object):
             parser.print_help()
             sys.exit(1)
 
-        # su and sudo command line arguments need to be mutually exclusive
-        if (options.su or options.su_user or options.ask_su_pass) and \
-                (options.sudo or options.sudo_user or options.ask_sudo_pass):
-            parser.error("Sudo arguments ('--sudo', '--sudo-user', and '--ask-sudo-pass') "
-                         "and su arguments ('-su', '--su-user', and '--ask-su-pass') are "
-                         "mutually exclusive")
-
-        if (options.ask_vault_pass and options.vault_password_file):
-            parser.error("--ask-vault-pass and --vault-password-file are mutually exclusive")
+        validate_conflicts(parser,options)
 
         return (options, args)
 
@@ -85,36 +77,24 @@ class Cli(object):
 
         pattern = args[0]
 
-        #-------------------------------------------------------------------------------
-        # FIXME: the password asking stuff needs to be ported over still
-        #-------------------------------------------------------------------------------
-        #sshpass    = None
-        #sudopass   = None
-        #su_pass    = None
-        #vault_pass = None
-        #
-        #options.ask_pass = options.ask_pass or C.DEFAULT_ASK_PASS
-        ## Never ask for an SSH password when we run with local connection
-        #if options.connection == "local":
-        #    options.ask_pass = False
-        #options.ask_sudo_pass = options.ask_sudo_pass or C.DEFAULT_ASK_SUDO_PASS
-        #options.ask_su_pass = options.ask_su_pass or C.DEFAULT_ASK_SU_PASS
-        #options.ask_vault_pass = options.ask_vault_pass or C.DEFAULT_ASK_VAULT_PASS
-        #
-        #(sshpass, sudopass, su_pass, vault_pass) = utils.ask_passwords(ask_pass=options.ask_pass, ask_sudo_pass=options.ask_sudo_pass, ask_su_pass=options.ask_su_pass, ask_vault_pass=options.ask_vault_pass)
-        #
-        # read vault_pass from a file
-        #if not options.ask_vault_pass and options.vault_password_file:
-        #    vault_pass = utils.read_vault_file(options.vault_password_file)
-        #-------------------------------------------------------------------------------
+        if options.connection == "local":
+            options.ask_pass = False
 
-        # FIXME: needs vault password, after the above is fixed
-        loader = DataLoader()
+        sshpass    = None
+        becomepass    = None
+        vault_pass = None
+
+        normalize_become_options(options)
+        (sshpass, becomepass, vault_pass) = ask_passwords(options)
+
+        if options.vault_password_file:
+        # read vault_pass from a file
+            vault_pass = read_vault_file(options.vault_password_file)
+
+        loader = DataLoader(vault_password=vault_pass)
         variable_manager = VariableManager()
 
         inventory = Inventory(loader=loader, variable_manager=variable_manager, host_list=options.inventory)
-        if options.subset:
-            inventory.subset(options.subset)
 
         hosts = inventory.list_hosts(pattern)
         if len(hosts) == 0:

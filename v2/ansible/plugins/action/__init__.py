@@ -130,10 +130,10 @@ class ActionBase:
         if tmp and "tmp" in tmp:
             # tmp has already been created
             return False
-        if not self._connection._has_pipelining or not C.ANSIBLE_SSH_PIPELINING or C.DEFAULT_KEEP_REMOTE_FILES or self._connection_info.su:
+        if not self._connection.__class__.has_pipelining or not C.ANSIBLE_SSH_PIPELINING or C.DEFAULT_KEEP_REMOTE_FILES or self._connection_info.become:
             # tmp is necessary to store module source code
             return True
-        if not self._connection._has_pipelining:
+        if not self._connection.__class__.has_pipelining:
             # tmp is necessary to store the module source code
             # or we want to keep the files on the target system
             return True
@@ -152,12 +152,11 @@ class ActionBase:
         basefile = 'ansible-tmp-%s-%s' % (time.time(), random.randint(0, 2**48))
         use_system_tmp = False
 
-        if (self._connection_info.sudo and self._connection_info.sudo_user != 'root') or (self._connection_info.su and self._connection_info.su_user != 'root'):
+        if self._connection_info.become and self._connection_info.become_user != 'root':
             use_system_tmp = True
 
         tmp_mode = None
-        if self._connection_info.remote_user != 'root' or \
-           ((self._connection_info.sudo and self._connection_info.sudo_user != 'root') or (self._connection_info.su and self._connection_info.su_user != 'root')):
+        if self._connection_info.remote_user != 'root' or self._connection_info.become and self._connection_info.become_user != 'root':
             tmp_mode = 'a+rx'
 
         cmd = self._shell.mkdtemp(basefile, use_system_tmp, tmp_mode)
@@ -291,10 +290,8 @@ class ActionBase:
         split_path = path.split(os.path.sep, 1)
         expand_path = split_path[0]
         if expand_path == '~':
-            if self._connection_info.sudo and self._connection_info.sudo_user:
-                expand_path = '~%s' % self._connection_info.sudo_user
-            elif self._connection_info.su and self._connection_info.su_user:
-                expand_path = '~%s' % self._connection_info.su_user
+            if self._connection_info.become and self._connection_info.become_user:
+                expand_path = '~%s' % self._connection_info.become_user
 
         cmd = self._shell.expand_user(expand_path)
         debug("calling _low_level_execute_command to expand the remote user path")
@@ -373,7 +370,7 @@ class ActionBase:
 
         environment_string = self._compute_environment_string()
 
-        if tmp and "tmp" in tmp and ((self._connection_info.sudo and self._connection_info.sudo_user != 'root') or (self._connection_info.su and self._connection_info.su_user != 'root')):
+        if tmp and "tmp" in tmp and self._connection_info.become and self._connection_info.become_user != 'root':
             # deal with possible umask issues once sudo'ed to other user
             self._remote_chmod(tmp, 'a+r', remote_module_path)
 
@@ -383,7 +380,7 @@ class ActionBase:
         # FIXME: all of the old-module style and async stuff has been removed from here, and
         #        might need to be re-added (unless we decide to drop support for old-style modules
         #        at this point and rework things to support non-python modules specifically)
-        if self._connection._has_pipelining and C.ANSIBLE_SSH_PIPELINING and not C.DEFAULT_KEEP_REMOTE_FILES:
+        if self._connection.__class__.has_pipelining and C.ANSIBLE_SSH_PIPELINING and not C.DEFAULT_KEEP_REMOTE_FILES:
             in_data = module_data
         else:
             if remote_module_path:
@@ -391,7 +388,7 @@ class ActionBase:
 
         rm_tmp = None
         if tmp and "tmp" in tmp and not C.DEFAULT_KEEP_REMOTE_FILES and not persist_files and delete_remote_tmp:
-            if not self._connection_info.sudo or self._connection_info.su or self._connection_info.sudo_user == 'root' or self._connection_info.su_user == 'root':
+            if not self._connection_info.become or self._connection_info.become_user == 'root':
                 # not sudoing or sudoing to root, so can cleanup files in the same step
                 rm_tmp = tmp
 
@@ -409,7 +406,7 @@ class ActionBase:
         debug("_low_level_execute_command returned ok")
 
         if tmp and "tmp" in tmp and not C.DEFAULT_KEEP_REMOTE_FILES and not persist_files and delete_remote_tmp:
-            if (self._connection_info.sudo and self._connection_info.sudo_user != 'root') or (self._connection_info.su and self._connection_info.su_user != 'root'):
+            if self._connection_info.become and self._connection_info.become_user != 'root':
             # not sudoing to root, so maybe can't delete files as that other user
             # have to clean up temp files as original user in a second step
                 cmd2 = self._shell.remove(tmp, recurse=True)
@@ -457,11 +454,7 @@ class ActionBase:
         success_key = None
 
         if sudoable:
-            if self._connection_info.su and self._connection_info.su_user:
-                cmd, prompt, success_key = self._connection_info.make_su_cmd(executable, cmd)
-            elif self._connection_info.sudo and self._connection_info.sudo_user:
-                # FIXME: hard-coded sudo_exe here
-                cmd, prompt, success_key = self._connection_info.make_sudo_cmd('/usr/bin/sudo', executable, cmd)
+            cmd, prompt, success_key = self._connection_info.make_become_cmd(cmd, executable)
 
         debug("executing the command %s through the connection" % cmd)
         rc, stdin, stdout, stderr = self._connection.exec_command(cmd, tmp, executable=executable, in_data=in_data)

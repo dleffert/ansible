@@ -24,9 +24,11 @@ import optparse
 import os
 import time
 import yaml
+import getpass
 
 from ansible import __version__
 from ansible import constants as C
+from ansible.utils.unicode import to_bytes
 
 # FIXME: documentation for methods here, which have mostly been
 #        copied directly over from the old utils/__init__.py
@@ -38,12 +40,14 @@ class SortedOptParser(optparse.OptionParser):
         self.option_list.sort(key=operator.methodcaller('get_opt_string'))
         return optparse.OptionParser.format_help(self, formatter=None)
 
-def base_parser(usage="", output_opts=False, runas_opts=False,
+def base_parser(usage="", output_opts=False, runas_opts=False, meta_opts=False,
     async_opts=False, connect_opts=False, subset_opts=False, check_opts=False, diff_opts=False):
     ''' create an options parser for any ansible script '''
 
     parser = SortedOptParser(usage, version=version("%prog"))
 
+    parser.add_option('-u', '--user', default=C.DEFAULT_REMOTE_USER, dest='remote_user',
+        help='connect as this user (default=%s)' % C.DEFAULT_REMOTE_USER)
     parser.add_option('-v','--verbose', dest='verbosity', default=0, action="count",
         help="verbose mode (-vvv for more, -vvvv to enable connection debugging)")
     parser.add_option('-f','--forks', dest='forks', default=C.DEFAULT_FORKS, type='int',
@@ -52,13 +56,9 @@ def base_parser(usage="", output_opts=False, runas_opts=False,
         help="specify inventory host file (default=%s)" % C.DEFAULT_HOST_LIST,
         default=C.DEFAULT_HOST_LIST)
     parser.add_option('-k', '--ask-pass', default=False, dest='ask_pass', action='store_true',
-        help='ask for SSH password')
+        help='ask for connection password')
     parser.add_option('--private-key', default=C.DEFAULT_PRIVATE_KEY_FILE, dest='private_key_file',
         help='use this file to authenticate the connection')
-    parser.add_option('-K', '--ask-sudo-pass', default=False, dest='ask_sudo_pass', action='store_true',
-        help='ask for sudo password')
-    parser.add_option('--ask-su-pass', default=False, dest='ask_su_pass', action='store_true',
-        help='ask for su password')
     parser.add_option('--ask-vault-pass', default=False, dest='ask_vault_pass', action='store_true',
         help='ask for vault password')
     parser.add_option('--vault-password-file', default=C.DEFAULT_VAULT_PASSWORD_FILE,
@@ -68,14 +68,16 @@ def base_parser(usage="", output_opts=False, runas_opts=False,
     parser.add_option('-M', '--module-path', dest='module_path',
         help="specify path(s) to module library (default=%s)" % C.DEFAULT_MODULE_PATH,
         default=None)
+    parser.add_option('-e', '--extra-vars', dest="extra_vars", action="append",
+        help="set additional variables as key=value or YAML/JSON", default=[])
 
     if subset_opts:
         parser.add_option('-l', '--limit', default=C.DEFAULT_SUBSET, dest='subset',
             help='further limit selected hosts to an additional pattern')
-
-    parser.add_option('-T', '--timeout', default=C.DEFAULT_TIMEOUT, type='int',
-        dest='timeout',
-        help="override the SSH timeout in seconds (default=%s)" % C.DEFAULT_TIMEOUT)
+        parser.add_option('-t', '--tags', dest='tags', default='all',
+            help="only run plays and tasks tagged with these values")
+        parser.add_option('--skip-tags', dest='skip_tags',
+            help="only run plays and tasks whose tags do not match these values")
 
     if output_opts:
         parser.add_option('-o', '--one-line', dest='one_line', action='store_true',
@@ -84,22 +86,37 @@ def base_parser(usage="", output_opts=False, runas_opts=False,
             help='log output to this directory')
 
     if runas_opts:
-        parser.add_option("-s", "--sudo", default=C.DEFAULT_SUDO, action="store_true",
-            dest='sudo', help="run operations with sudo (nopasswd)")
+        # priv user defaults to root later on to enable detecting when this option was given here
+        parser.add_option('-K', '--ask-sudo-pass', default=False, dest='ask_sudo_pass', action='store_true',
+            help='ask for sudo password (deprecated, use become)')
+        parser.add_option('--ask-su-pass', default=False, dest='ask_su_pass', action='store_true',
+            help='ask for su password (deprecated, use become)')
+        parser.add_option("-s", "--sudo", default=C.DEFAULT_SUDO, action="store_true", dest='sudo',
+            help="run operations with sudo (nopasswd) (deprecated, use become)")
         parser.add_option('-U', '--sudo-user', dest='sudo_user', default=None,
-                          help='desired sudo user (default=root)')  # Can't default to root because we need to detect when this option was given
-        parser.add_option('-u', '--user', default=C.DEFAULT_REMOTE_USER,
-            dest='remote_user', help='connect as this user (default=%s)' % C.DEFAULT_REMOTE_USER)
+                          help='desired sudo user (default=root) (deprecated, use become)')
+        parser.add_option('-S', '--su', default=C.DEFAULT_SU, action='store_true',
+            help='run operations with su (deprecated, use become)')
+        parser.add_option('-R', '--su-user', default=None,
+            help='run operations with su as this user (default=%s) (deprecated, use become)' % C.DEFAULT_SU_USER)
 
-        parser.add_option('-S', '--su', default=C.DEFAULT_SU,
-                          action='store_true', help='run operations with su')
-        parser.add_option('-R', '--su-user', help='run operations with su as this '
-                                                  'user (default=%s)' % C.DEFAULT_SU_USER)
+        # consolidated privilege escalation (become)
+        parser.add_option("-b", "--become", default=C.DEFAULT_BECOME, action="store_true", dest='become',
+            help="run operations with become (nopasswd implied)")
+        parser.add_option('--become-method', dest='become_method', default=C.DEFAULT_BECOME_METHOD, type='string',
+            help="privilege escalation method to use (default=%s), valid choices: [ %s ]" % (C.DEFAULT_BECOME_METHOD, ' | '.join(C.BECOME_METHODS)))
+        parser.add_option('--become-user', default=None, dest='become_user', type='string',
+            help='run operations as this user (default=%s)' % C.DEFAULT_BECOME_USER)
+        parser.add_option('--ask-become-pass', default=False, dest='become_ask_pass', action='store_true',
+            help='ask for privilege escalation password')
+
 
     if connect_opts:
-        parser.add_option('-c', '--connection', dest='connection',
-                          default=C.DEFAULT_TRANSPORT,
-                          help="connection type to use (default=%s)" % C.DEFAULT_TRANSPORT)
+        parser.add_option('-c', '--connection', dest='connection', default=C.DEFAULT_TRANSPORT,
+            help="connection type to use (default=%s)" % C.DEFAULT_TRANSPORT)
+        parser.add_option('-T', '--timeout', default=C.DEFAULT_TIMEOUT, type='int', dest='timeout',
+            help="override the connection timeout in seconds (default=%s)" % C.DEFAULT_TIMEOUT)
+
 
     if async_opts:
         parser.add_option('-P', '--poll', default=C.DEFAULT_POLL_INTERVAL, type='int',
@@ -110,14 +127,20 @@ def base_parser(usage="", output_opts=False, runas_opts=False,
 
     if check_opts:
         parser.add_option("-C", "--check", default=False, dest='check', action='store_true',
-            help="don't make any changes; instead, try to predict some of the changes that may occur"
-        )
+            help="don't make any changes; instead, try to predict some of the changes that may occur")
+        parser.add_option('--syntax-check', dest='syntax', action='store_true',
+            help="perform a syntax check on the playbook, but do not execute it")
 
     if diff_opts:
         parser.add_option("-D", "--diff", default=False, dest='diff', action='store_true',
             help="when changing (small) files and templates, show the differences in those files; works great with --check"
         )
 
+    if meta_opts:
+        parser.add_option('--force-handlers', dest='force_handlers', action='store_true',
+            help="run handlers even if a task fails")
+        parser.add_option('--flush-cache', dest='flush_cache', action='store_true',
+            help="clear the fact cache")
 
     return parser
 
@@ -211,4 +234,69 @@ def _gitinfo():
             result += "\n  {0}: {1}".format(submodule_path, submodule_info)
     f.close()
     return result
+
+
+def ask_passwords(options):
+    sshpass = None
+    becomepass = None
+    vaultpass = None
+    become_prompt = ''
+
+    if options.ask_pass:
+        sshpass = getpass.getpass(prompt="SSH password: ")
+        become_prompt = "%s password[defaults to SSH password]: " % options.become_method.upper()
+        if sshpass:
+            sshpass = to_bytes(sshpass, errors='strict', nonstring='simplerepr')
+    else:
+        become_prompt = "%s password: " % options.become_method.upper()
+
+    if options.become_ask_pass:
+        becomepass = getpass.getpass(prompt=become_prompt)
+        if options.ask_pass and becomepass == '':
+            becomepass = sshpass
+        if becomepass:
+            becomepass = to_bytes(becomepass)
+
+    if options.ask_vault_pass:
+        vaultpass = getpass.getpass(prompt="Vault password: ")
+        if vaultpass:
+            vaultpass = to_bytes(vaultpass, errors='strict', nonstring='simplerepr').strip()
+
+    return (sshpass, becomepass, vaultpass)
+
+
+def normalize_become_options(options):
+    ''' this keeps backwards compatibility with sudo/su options '''
+    options.become_ask_pass = options.become_ask_pass or options.ask_sudo_pass or options.ask_su_pass or C.DEFAULT_BECOME_ASK_PASS
+    options.become_user = options.become_user or options.sudo_user or options.su_user or C.DEFAULT_BECOME_USER
+
+    if options.become:
+        pass
+    elif options.sudo:
+        options.become = True
+        options.become_method = 'sudo'
+    elif options.su:
+        options.become = True
+        options.become_method = 'su'
+
+
+def validate_conflicts(parser, options):
+
+    # Check for vault related conflicts
+    if (options.ask_vault_pass and options.vault_password_file):
+        parser.error("--ask-vault-pass and --vault-password-file are mutually exclusive")
+
+
+    # Check for privilege escalation conflicts
+    if (options.su or options.su_user or options.ask_su_pass) and \
+                (options.sudo or options.sudo_user or options.ask_sudo_pass) or \
+        (options.su or options.su_user or options.ask_su_pass) and \
+                (options.become or options.become_user or options.become_ask_pass) or \
+        (options.sudo or options.sudo_user or options.ask_sudo_pass) and \
+                (options.become or options.become_user or options.become_ask_pass):
+
+            parser.error("Sudo arguments ('--sudo', '--sudo-user', and '--ask-sudo-pass') "
+                         "and su arguments ('-su', '--su-user', and '--ask-su-pass') "
+                         "and become arguments ('--become', '--become-user', and '--ask-become-pass')"
+                         " are exclusive of each other")
 
